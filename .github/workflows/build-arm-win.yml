@@ -1,4 +1,4 @@
-name: 构建并发布aria2
+name: aria2
 
 on:
   push:
