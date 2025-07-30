@@ -38,7 +38,7 @@ jobs:
       - name: 安装依赖 (Windows)
         if: matrix.target == 'windows'
         run: |
-          choco install -y autoconf automake libtool pkgconfig openssl-devel zlib-devel
+          choco install -y autoconf automake libtool pkgconfig openssl zlib
 
       - name: 配置构建 (ARM)
         if: matrix.target == 'arm'
@@ -78,12 +78,16 @@ jobs:
           else
             zip -r ${{ matrix.asset_name }} ${{ matrix.artifact }}
           fi
+          
+          # 显示当前目录下的文件，用于调试
+          ls -la
 
       - name: 上传构建产物作为artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.asset_name }}
+          retention-days: 1
 
   release:
     name: 创建并发布Release
@@ -94,9 +98,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: 显示下载的文件结构
-        run: ls -R artifacts
+          
+      - name: 显示下载的文件结构（用于调试）
+        run: |
+          ls -R artifacts
+          # 确保文件存在
+          test -f "artifacts/aria2-arm/aria2-arm.zip" || { echo "ARM构建产物不存在"; exit 1; }
+          test -f "artifacts/aria2-windows/aria2-windows.zip" || { echo "Windows构建产物不存在"; exit 1; }
 
       - name: 创建GitHub Release
         uses: softprops/action-gh-release@v2
