@@ -1,0 +1,120 @@
+name: Build ARM version of aria2
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**/*.c'
+      - '**/*.h'
+      - 'Makefile'
+      - 'configure.ac'
+      - '.github/workflows/build-arm.yml'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-arm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch:
+          - armhf  # ARM 32-bit
+          - arm64  # ARM 64-bit
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: nwskj/aria2  # 目标仓库
+          fetch-depth: 1
+
+      - name: Set up cross-compilation environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libssl-dev \
+            libcppunit-dev \
+            autotools-dev \
+            libxml2-dev \
+            libgcrypt20-dev \
+            libssh2-1-dev \
+            libc-ares-dev
+
+          # 根据架构安装对应的交叉编译工具链
+          if [ "${{ matrix.arch }}" = "armhf" ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          else
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
+
+      - name: Configure build
+        run: |
+          # 生成配置脚本
+          autoreconf -i
+
+          # 设置交叉编译工具前缀
+          if [ "${{ matrix.arch }}" = "armhf" ]; then
+            export CC=arm-linux-gnueabihf-gcc
+            export CXX=arm-linux-gnueabihf-g++
+            export AR=arm-linux-gnueabihf-ar
+            export RANLIB=arm-linux-gnueabihf-ranlib
+            CONFIG_FLAGS="--host=arm-linux-gnueabihf"
+          else
+            export CC=aarch64-linux-gnu-gcc
+            export CXX=aarch64-linux-gnu-g++
+            export AR=aarch64-linux-gnu-ar
+            export RANLIB=aarch64-linux-gnu-ranlib
+            CONFIG_FLAGS="--host=aarch64-linux-gnu"
+          fi
+
+          # 配置构建选项
+          ./configure \
+            $CONFIG_FLAGS \
+            --prefix=/usr \
+            --sysconfdir=/etc \
+            --localstatedir=/var \
+            --enable-shared \
+            --disable-static \
+            --with-openssl \
+            --with-libxml2 \
+            --with-libgcrypt \
+            --with-libssh2 \
+            --with-c-ares
+
+      - name: Build aria2
+        run: |
+          make -j$(nproc)
+
+      - name: Create package
+        run: |
+          # 创建临时安装目录
+          mkdir -p aria2-${{ matrix.arch }}/usr/bin
+          mkdir -p aria2-${{ matrix.arch }}/usr/share/man/man1
+
+          # 安装到临时目录
+          make DESTDIR=$(pwd)/aria2-${{ matrix.arch }} install
+
+          # 打包成tar.gz
+          tar czf aria2-${{ matrix.arch }}.tar.gz aria2-${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: aria2-${{ matrix.arch }}
+          path: aria2-${{ matrix.arch }}.tar.gz
+
+      - name: Create release and upload binaries
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: aria2-${{ matrix.arch }}.tar.gz
+          name: ARM Build ${{ github.sha }}
+          tag_name: arm-build-${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
