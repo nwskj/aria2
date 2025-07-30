@@ -1,0 +1,114 @@
+name: 构建并发布aria2
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当推送类似v1.0.0的标签时触发
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.target }} 版本
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: arm
+            artifact: aria2-arm
+            asset_name: aria2-arm.zip
+          - os: windows-latest
+            target: windows
+            artifact: aria2-windows
+            asset_name: aria2-windows.zip
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          repository: nwskj/aria2
+          fetch-depth: 0
+
+      - name: 安装依赖 (Linux/ARM)
+        if: matrix.target == 'arm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool pkg-config libssl-dev zlib1g-dev libc-ares-dev
+          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+
+      - name: 安装依赖 (Windows)
+        if: matrix.target == 'windows'
+        run: |
+          choco install -y autoconf automake libtool pkgconfig openssl-devel zlib-devel
+
+      - name: 配置构建 (ARM)
+        if: matrix.target == 'arm'
+        run: |
+          ./autogen.sh
+          ./configure --host=arm-linux-gnueabihf --prefix=/usr/local --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt
+
+      - name: 配置构建 (Windows)
+        if: matrix.target == 'windows'
+        run: |
+          ./autogen.sh
+          ./configure --prefix=$PWD/build --enable-static
+
+      - name: 编译
+        run: make -j$(nproc)
+
+      - name: 安装到指定目录
+        run: make install
+
+      - name: 打包构建产物
+        run: |
+          # 创建打包目录
+          mkdir -p ${{ matrix.artifact }}
+          
+          # 复制必要文件到打包目录
+          if [ "${{ matrix.target }}" = "arm" ]; then
+            cp -r /usr/local/bin ${{ matrix.artifact }}
+            cp -r /usr/local/share ${{ matrix.artifact }}
+          else
+            cp -r build/bin ${{ matrix.artifact }}
+            cp -r build/share ${{ matrix.artifact }}
+          fi
+          
+          # 压缩打包目录
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a ${{ matrix.asset_name }} ${{ matrix.artifact }}
+          else
+            zip -r ${{ matrix.asset_name }} ${{ matrix.artifact }}
+          fi
+
+      - name: 上传构建产物作为artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    name: 创建并发布Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 显示下载的文件结构
+        run: ls -R artifacts
+
+      - name: 创建GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/aria2-arm/aria2-arm.zip
+            artifacts/aria2-windows/aria2-windows.zip
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## aria2 自动构建版本
+            
+            - ARM版本: aria2-arm.zip
+            - Windows版本: aria2-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
